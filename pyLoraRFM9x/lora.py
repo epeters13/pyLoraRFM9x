@@ -71,11 +71,11 @@ class LoRa(object):
         GPIO.add_event_detect(self._interrupt, GPIO.RISING, callback=self._handle_interrupt)
 
         # reset the board
-        if reset_port:
-            GPIO.setup(reset_port,GPIO.OUT)
-            GPIO.output(reset_port,GPIO.LOW)
+        if reset_pin:
+            GPIO.setup(reset_pin,GPIO.OUT)
+            GPIO.output(reset_pin,GPIO.LOW)
             time.sleep(0.01)
-            GPIO.output(reset_port,GPIO.HIGH)
+            GPIO.output(reset_pin,GPIO.HIGH)
             time.sleep(0.01)
 
         
@@ -315,7 +315,7 @@ class LoRa(object):
                 if self.crypto and len(message) % 16 == 0:
                     message = self._decrypt(message)
 
-                if  header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK:
+                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and self._ack:
                     self.send_ack(header_from, header_id)
 
                 self.set_mode_rx()

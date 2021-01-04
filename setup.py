@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
     
 setuptools.setup(
     name='pyLoraRFM9x',
-    version='0.9.1',
+    version='0.9.2',
     packages=setuptools.find_packages(),
     url='https://github.com/mugpahug/pyLoraRFM9x',
     license='MIT',
