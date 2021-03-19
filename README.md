@@ -162,3 +162,11 @@ Callback function that runs when a message is received
 
 [Adafruit CircuitPython module for the RFM95/6/7/8](https://github.com/adafruit/Adafruit_CircuitPython_RFM9x) - LoRa library for CircuitPython
 
+# Changelog
+
+## 0.9.3
+Removed unecessary numpy import
+
+## 0.9.2
+Merged martynwheeler's fix for handling ACKS, and  straend's naming
+

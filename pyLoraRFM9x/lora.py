@@ -3,7 +3,6 @@ from enum import Enum
 import math
 from collections import namedtuple
 from random import random
-import numpy as np
 
 import RPi.GPIO as GPIO
 import spidev
