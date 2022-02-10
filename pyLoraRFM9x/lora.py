@@ -314,7 +314,7 @@ class LoRa(object):
                 if self.crypto and len(message) % 16 == 0:
                     message = self._decrypt(message)
 
-                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and self._ack:
+                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and self._acks:
                     self.send_ack(header_from, header_id)
 
                 self.set_mode_rx()
