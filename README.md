@@ -52,9 +52,9 @@ def on_recv(payload):
     print("Received:", payload.message)
     print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
 
-# Use chip select 1. GPIO pin 5 will be used for interrupts and set reset pin to 25
+# Lora object will use spi port 0 and use chip select 1. GPIO pin 5 will be used for interrupts and set reset pin to 25
 # The address of this device will be set to 2
-lora = LoRa(1, 5, 2, reset_pin = 25, modem_config=ModemConfig.Bw125Cr45Sf128, tx_power=14, acks=True)
+lora = LoRa(0, 1, 5, 2, reset_pin = 25, modem_config=ModemConfig.Bw125Cr45Sf128, tx_power=14, acks=True)
 lora.on_recv = on_recv
 
 # Send a message to a recipient device with address 10
@@ -86,9 +86,11 @@ lora = LoRa(0, 17, 2, crypto=crypto)
 ### Configuration
 ##### Initialization
 ```python
-LoRa(channel, interrupt, this_address, reset_pin=reset_pin, freq=915, tx_power=14,
+LoRa(spiport, channel, interrupt, this_address, reset_pin=reset_pin, freq=915, tx_power=14,
       modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None)
 ```
+**`spiport`** SPI interface to use (either 0 or 1, if your LoRa radio if connected to SPI0 or SPI1, respectively)
+
 **`channel`** SPI channel to use (either 0 or 1, if your LoRa radio if connected to CE0 or CE1, respectively)
 
 **`interrupt`** GPIO pin (BCM-style numbering) to use for the interrupt

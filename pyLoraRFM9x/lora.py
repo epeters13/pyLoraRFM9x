@@ -20,13 +20,14 @@ class ModemConfig(Enum):
 
 
 class LoRa(object):
-    def __init__(self, channel, interrupt, this_address, reset_pin=None, freq=915, tx_power=14,
+    def __init__(self, spiport, channel, interrupt, this_address, reset_pin=None, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None):
         """
-        Lora((channel, interrupt, this_address, freq=915, tx_power=14,
+        Lora((spiport, channel, interrupt, this_address, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, reset_pin=False)
+        spiport: spi port connected to module, 1 or 0
         channel: SPI channel [0 for CE0, 1 for CE1]
         interrupt: Raspberry Pi interrupt pin (BCM)
         this_address: set address for this device [0-254]
@@ -40,7 +41,7 @@ class LoRa(object):
         """
             
 
-        
+        self._spiport = spiport
         self._channel = channel
         self._interrupt = interrupt
         self._hw_lock = threading.RLock() # lock for multithreaded access
@@ -79,7 +80,7 @@ class LoRa(object):
 
         
         self.spi = spidev.SpiDev()
-        self.spi.open(0, self._channel)
+        self.spi.open(spiport, self._channel)
         self.spi.max_speed_hz = 5000000
 
         self._spi_write(REG_01_OP_MODE, MODE_SLEEP | LONG_RANGE_MODE)
