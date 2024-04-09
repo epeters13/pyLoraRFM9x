@@ -20,14 +20,13 @@ class ModemConfig(Enum):
 
 
 class LoRa(object):
-    def __init__(self, spiport, channel, interrupt, this_address, reset_pin=None, freq=915, tx_power=14,
+    def __init__(self, channel, interrupt, this_address, reset_pin=None, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
-                 acks=False, crypto=None):
+                 acks=False, crypto=None, default_mode = 0):
         """
-        Lora((spiport, channel, interrupt, this_address, freq=915, tx_power=14,
+        Lora((channel, interrupt, this_address, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, reset_pin=False)
-        spiport: spi port connected to module, 1 or 0
         channel: SPI channel [0 for CE0, 1 for CE1]
         interrupt: Raspberry Pi interrupt pin (BCM)
         this_address: set address for this device [0-254]
@@ -38,6 +37,7 @@ class LoRa(object):
         receive_all: if True, don't filter packets on address
         acks: if True, request acknowledgments
         crypto: if desired, an instance of pycrypto AES
+        default_mode: Default mode the modem enters after transmit [0: RXCONTINUOUS, 1: IDLE, 2: SLEEP] default: RXCONTINUOUS
         """
             
 
@@ -65,6 +65,16 @@ class LoRa(object):
         self.wait_packet_sent_timeout = 0.2
         self.retry_timeout = 0.2
 
+        # default mode after CAD_DONE and TX_DONE events
+        if default_mode == 0:
+            self._set_default_mode = self.set_mode_rx
+        elif default_mode == 1:
+            self._set_default_mode = self.set_mode_idle
+        elif default_mode == 2:
+            self._set_default_mode = self.set_mode_sleep
+        else:
+            raise ValueError(f"Invalid default mode: {default_mode}")
+        
         # Setup the module
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(self._interrupt, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
@@ -80,7 +90,7 @@ class LoRa(object):
 
         
         self.spi = spidev.SpiDev()
-        self.spi.open(spiport, self._channel)
+        self.spi.open(0, self._channel)
         self.spi.max_speed_hz = 5000000
 
         self._spi_write(REG_01_OP_MODE, MODE_SLEEP | LONG_RANGE_MODE)
@@ -127,7 +137,7 @@ class LoRa(object):
         # This should be overridden by the user
         pass
 
-    def sleep(self):
+    def set_mode_sleep(self):
         if self._mode != MODE_SLEEP:
             with self._hw_lock:
                 self._spi_write(REG_01_OP_MODE, MODE_SLEEP)
@@ -138,21 +148,21 @@ class LoRa(object):
         if self._mode != MODE_TX:
             with self._hw_lock:
                 self._spi_write(REG_01_OP_MODE, MODE_TX)
-                self._spi_write(REG_40_DIO_MAPPING1, 0x40)  # Interrupt on TxDone
+                self._spi_write(REG_40_DIO_MAPPING1, 0x40)  # Interrupt on TxDone on DIO0 (01 in bits 7-6 (table 63))
                 self._mode = MODE_TX
-
+                
     def set_mode_rx(self):
         if self._mode != MODE_RXCONTINUOUS:
             with self._hw_lock:
                 self._spi_write(REG_01_OP_MODE, MODE_RXCONTINUOUS)
-                self._spi_write(REG_40_DIO_MAPPING1, 0x00)  # Interrupt on RxDone
+                self._spi_write(REG_40_DIO_MAPPING1, 0x00)  # Interrupt on RxDone on DIO0 (00 in bits 7-6 (table 63))
                 self._mode = MODE_RXCONTINUOUS
 
     def set_mode_cad(self):
         if self._mode != MODE_CAD:
             with self._hw_lock:
                 self._spi_write(REG_01_OP_MODE, MODE_CAD)
-                self._spi_write(REG_40_DIO_MAPPING1, 0x80)  # Interrupt on CadDone
+                self._spi_write(REG_40_DIO_MAPPING1, 0x80)  # Interrupt on CadDone on DIO0 (10 in bits 7-6 (table 63))
                 self._mode = MODE_CAD
 
     def _is_channel_active(self):
@@ -164,12 +174,12 @@ class LoRa(object):
 
     def wait_cad(self):
         if not self.cad_timeout:
-            return True
+            return False
 
         start = time.time()
         for status in self._is_channel_active():
-            if time.time() - start < self.cad_timeout:
-                return False
+            if time.time() - start > self.cad_timeout:
+                return True
 
             if status is None:
                 time.sleep(0.1)
@@ -194,10 +204,15 @@ class LoRa(object):
 
 
     def send(self, data, header_to, header_id=0, header_flags=0):
-        self.wait_packet_sent()
-        self.set_mode_idle()
-        self.wait_cad()
-        # print(f'send {data} to {header_to}')
+        """
+        The TX FIFO can only be filled in stand-by or idle mode
+        """
+        self.wait_packet_sent() # make sure we are not transmitting
+        CAD_status = self.wait_cad()  # check for CAD
+        if CAD_status == 1:
+            return False
+        self.set_mode_idle()  # Set mode to idle, so we can start filling the transmit FIFO
+
         header = [header_to, self._this_address, header_id, header_flags]
         if type(data) == int:
             data = [data]
@@ -216,9 +231,8 @@ class LoRa(object):
             self._spi_write(REG_22_PAYLOAD_LENGTH, len(payload))
 
         self.set_mode_tx()
-
+        return self.wait_packet_sent() # wait for the send interrupt to trigger
         
-        return True
 
     def send_to_wait(self, data, header_to, header_flags=0, retries=3):
         self._last_header_id = (self._last_header_id + 1) & 0xFF
@@ -226,9 +240,10 @@ class LoRa(object):
         for _ in range(retries + 1):
             if self._acks:
                 header_flags |= FLAGS_REQ_ACK
-            self.send(data, header_to, header_id=self._last_header_id, header_flags=header_flags)
-            self.set_mode_rx()
-            # print('tried once...')
+            success = self.send(data, header_to, header_id=self._last_header_id, header_flags=header_flags)
+            if success == False:
+                # transmit failed (likely due to CAD)
+                continue
             if (not self._acks) or (header_to == BROADCAST_ADDRESS):  # Don't wait for acks from a broadcast message
                 return True
             # print(f'sending {data} to {header_to}')
@@ -245,7 +260,7 @@ class LoRa(object):
         return False
 
     def send_ack(self, header_to, header_id):
-        print('SENT ACK')
+        # print('SENT ACK')
         self.send(b'!', header_to, header_id, FLAGS_ACK)
         self.wait_packet_sent()
 
@@ -315,7 +330,7 @@ class LoRa(object):
                 if self.crypto and len(message) % 16 == 0:
                     message = self._decrypt(message)
 
-                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and self._acks:
+                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and not self._ack:
                     self.send_ack(header_from, header_id)
 
                 self.set_mode_rx()
@@ -329,11 +344,11 @@ class LoRa(object):
                     self.on_recv(self._last_payload)
 
         elif self._mode == MODE_TX and (irq_flags & TX_DONE):
-            self.set_mode_rx()
+            self._set_default_mode() # configured in init
 
         elif self._mode == MODE_CAD and (irq_flags & CAD_DONE):
-            self._cad = irq_flags & CAD_DETECTED
-            self.set_mode_rx()
+            self._cad = irq_flags & CAD_DETECTED # 0 false, 1 detected
+            self._set_default_mode() 
         elif self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_TIMEOUT):
             pass
 
