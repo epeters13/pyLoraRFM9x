@@ -1,0 +1,27 @@
+[project]
+name = "pyLoraRFM9x"
+version = "1.0.1"
+authors = [
+  { name="Edwin Peters", email="edwin.g.w.peters@gmail.com" },
+]
+description = "Interrupt driven LoRa RFM9x library for Raspberry Pi inspired by RadioHead"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.5"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Hardware",
+]
+dependencies = [
+    "lgpio",
+    "spidev",
+]
+keywords = ["lora", "rfm95", "rfm9x", "rfm96", "rfm97", "rfm98", "hardware", "raspberrypi"]
+
+[project.urls]
+Homepage = "https://github.com/epeters13/pyLoraRFM9x"
+Issues = "https://github.com/epeters13/pyLoraRFM9x/issues"
