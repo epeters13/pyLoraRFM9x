@@ -1,10 +1,34 @@
+"""
+MIT License
+
+Copyright (c) 2019 Anne Wood, 2020- Edwin G.W. Peters
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import time
 from enum import Enum
 import math
 from collections import namedtuple
 from random import random
 
-import RPi.GPIO as GPIO
+import lgpio
 import spidev
 
 import threading
@@ -20,16 +44,16 @@ class ModemConfig(Enum):
 
 
 class LoRa(object):
-    def __init__(self, channel, interrupt, this_address, reset_pin=None, freq=915, tx_power=14,
+    def __init__(self, spi_channel, interrupt_pin, my_address, reset_pin=None, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, default_mode = 0):
         """
-        Lora((channel, interrupt, this_address, freq=915, tx_power=14,
+        Lora((spi_channel, interrupt_pin, my_address, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, reset_pin=False)
-        channel: SPI channel [0 for CE0, 1 for CE1]
-        interrupt: Raspberry Pi interrupt pin (BCM)
-        this_address: set address for this device [0-254]
+        spi_channel: SPI spi_channel [0 for CE0, 1 for CE1]
+        interrupt_pin: Raspberry Pi interrupt_pin pin (BCM)
+        my_address: set address for this device [0-254]
         reset_pin: the Raspberry Pi port used to reset the RFM9x if connected
         freq: frequency in MHz
         tx_power: transmit power in dBm
@@ -39,11 +63,9 @@ class LoRa(object):
         crypto: if desired, an instance of pycrypto AES
         default_mode: Default mode the modem enters after transmit [0: RXCONTINUOUS, 1: IDLE, 2: SLEEP] default: RXCONTINUOUS
         """
-            
-
-        self._spiport = spiport
-        self._channel = channel
-        self._interrupt = interrupt
+        
+        self._spi_channel = spi_channel
+        self._interrupt_pin = interrupt_pin
         self._hw_lock = threading.RLock() # lock for multithreaded access
 
         self._mode = None
@@ -54,7 +76,7 @@ class LoRa(object):
         self._receive_all = receive_all
         self._acks = acks
 
-        self._this_address = this_address
+        self._my_address = my_address
         self._last_header_id = 0
 
         self._last_payload = None
@@ -76,21 +98,22 @@ class LoRa(object):
             raise ValueError(f"Invalid default mode: {default_mode}")
         
         # Setup the module
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(self._interrupt, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-        GPIO.add_event_detect(self._interrupt, GPIO.RISING, callback=self._handle_interrupt)
+        self.GPIO_handle = GPIO_handle = lgpio.gpiochip_open(0) # 0 is BCM2711, 1 is exp-gpio
+        lgpio.gpio_claim_input(GPIO_handle, self._interrupt_pin, lgpio.SET_PULL_DOWN) # We have to configure the pin as input first
+        self._al = lgpio.gpio_claim_alert(GPIO_handle, self._interrupt_pin, lgpio.RISING_EDGE) # we need to enable an alert on the rising edge first
+        self._cb = lgpio.callback(GPIO_handle, self._interrupt_pin, edge = lgpio.RISING_EDGE, func = self._handle_interrupt) # Then, we can connect a callback to the event
 
         # reset the board
         if reset_pin:
-            GPIO.setup(reset_pin,GPIO.OUT)
-            GPIO.output(reset_pin,GPIO.LOW)
+            lgpio.gpio_claim_output(GPIO_handle, reset_pin)
+            lgpio.gpio_write(GPIO_handle, reset_pin, lgpio.LOW)
             time.sleep(0.01)
-            GPIO.output(reset_pin,GPIO.HIGH)
+            lgpio.gpio_write(GPIO_handle, reset_pin, lgpio.HIGH)
             time.sleep(0.01)
 
         
         self.spi = spidev.SpiDev()
-        self.spi.open(0, self._channel)
+        self.spi.open(0, self._spi_channel)
         self.spi.max_speed_hz = 5000000
 
         self._spi_write(REG_01_OP_MODE, MODE_SLEEP | LONG_RANGE_MODE)
@@ -213,7 +236,7 @@ class LoRa(object):
             return False
         self.set_mode_idle()  # Set mode to idle, so we can start filling the transmit FIFO
 
-        header = [header_to, self._this_address, header_id, header_flags]
+        header = [header_to, self._my_address, header_id, header_flags]
         if type(data) == int:
             data = [data]
         elif type(data) == bytes:
@@ -251,7 +274,7 @@ class LoRa(object):
             start = time.time()
             while time.time() - start < self.retry_timeout + (self.retry_timeout * random()):
                 if self._last_payload:
-                    if self._last_payload.header_to == self._this_address and \
+                    if self._last_payload.header_to == self._my_address and \
                             self._last_payload.header_flags & FLAGS_ACK and \
                             self._last_payload.header_id == self._last_header_id:
 
@@ -296,7 +319,7 @@ class LoRa(object):
         encrypted_msg = self.crypto.encrypt(msg_bytes)
         return encrypted_msg
 
-    def _handle_interrupt(self, channel):
+    def _handle_interrupt(self, chip, gpio_pin, gpio_level, timestamp):
         irq_flags = self._spi_read(REG_12_IRQ_FLAGS)
 
         if self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_DONE):
@@ -324,13 +347,13 @@ class LoRa(object):
                 header_flags = packet[3]
                 message = bytes(packet[4:]) if packet_len > 4 else b''
 
-                if self._this_address != header_to and BROADCAST_ADDRESS != header_to and self._receive_all is False:
+                if self._my_address != header_to and BROADCAST_ADDRESS != header_to and self._receive_all is False:
                     return
 
                 if self.crypto and len(message) % 16 == 0:
                     message = self._decrypt(message)
 
-                if  (header_to == self._this_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and not self._ack:
+                if  (header_to == self._my_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and not self._ack:
                     self.send_ack(header_from, header_id)
 
                 self.set_mode_rx()

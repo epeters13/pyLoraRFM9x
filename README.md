@@ -8,7 +8,7 @@ This fork fixes bugs in the interrupt handling, and supports both acknowledged a
 
 # Usage
 ### Installation
-Requires Python >= 3.5. [RPi.GPIO](https://pypi.python.org/pypi/RPi.GPIO) and [spidev](https://pypi.python.org/pypi/spidev) will be installed as requirements
+Requires Python >= 3.5. [lgpio](http://abyz.me.uk/lg/py_lgpio.html) and [spidev](https://pypi.python.org/pypi/spidev) will be installed as requirements
 ```bash
 pip install --upgrade pyLoraRFM9x
 ```
@@ -86,16 +86,14 @@ lora = LoRa(0, 17, 2, crypto=crypto)
 ### Configuration
 ##### Initialization
 ```python
-LoRa(spiport, channel, interrupt, this_address, reset_pin=reset_pin, freq=915, tx_power=14,
+LoRa(spi_channel, interrupt_pin, my_address, reset_pin=reset_pin, freq=915, tx_power=14,
       modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None)
 ```
-**`spiport`** SPI interface to use (either 0 or 1, if your LoRa radio if connected to SPI0 or SPI1, respectively)
+**`spi_channel`** SPI channel to use (either 0 or 1, if your LoRa radio if connected to CE0 or CE1, respectively)
 
-**`channel`** SPI channel to use (either 0 or 1, if your LoRa radio if connected to CE0 or CE1, respectively)
+**`interrupt_pin`** GPIO pin (BCM-style numbering) to use for the interrupt
 
-**`interrupt`** GPIO pin (BCM-style numbering) to use for the interrupt
-
-**`this_address`** The address number (0-254) your device will use when sending and receiving packets.
+**`my_address`** The address number (0-254) your device will use when sending and receiving packets.
 
 **`reset_pin`** The pin that resets the module. Defaults to None
 
@@ -148,12 +146,14 @@ Blocks until a packet has finished transmitting. Returns `False` if a timeout oc
 ###### `close()`
 Cleans up GPIO pins and closes the SPI connection. This should be called when your program exits.
 
-
 ##### Callbacks
 `on_recv(payload)` 
 Callback function that runs when a message is received
 `payload` has the following attributes:
 `header_from`, `header_to`, `header_id`, `header_flags`, `message`, `rssi`, `snr`
+
+### Verify pin usage
+Use `gpioinfo` command in the shell
 
 # Resources
 [RadioHead](http://www.airspayce.com/mikem/arduino/RadioHead/) - The RadioHead project. Very useful source of information on working with LoRa radios.
@@ -165,6 +165,12 @@ Callback function that runs when a message is received
 [Adafruit CircuitPython module for the RFM95/6/7/8](https://github.com/adafruit/Adafruit_CircuitPython_RFM9x) - LoRa library for CircuitPython
 
 # Changelog
+
+## 1.0.0
+Removed RPi.GPIO dependency and ported to lgpio due to the removal of the sysfs GPIO interface in newer kernels
+
+## 0.9.4
+Fixed a timing issue that could cause the modem to hang when transmitting.
 
 ## 0.9.3
 Removed unecessary numpy import

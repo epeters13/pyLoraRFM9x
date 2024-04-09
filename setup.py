@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
     
 setuptools.setup(
     name='pyLoraRFM9x',
-    version='0.9.3',
+    version='1.0.0',
     packages=setuptools.find_packages(),
     url='https://github.com/mugpahug/pyLoraRFM9x',
     license='MIT',
@@ -25,6 +25,6 @@ setuptools.setup(
     ],
     keywords='lora rfm95 rfm9x rfm96 rfm97 rfm98 hardware raspberrypi',
     install_requires=[
-        'RPi.GPIO',
+        'lgpio',
         'spidev'],
 )
