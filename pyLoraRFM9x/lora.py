@@ -44,16 +44,17 @@ class ModemConfig(Enum):
 
 
 class LoRa(object):
-    def __init__(self, spi_channel, interrupt_pin, my_address, reset_pin=None, freq=915, tx_power=14,
+    def __init__(self, spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=None, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, default_mode = 0):
         """
         Lora((spi_channel, interrupt_pin, my_address, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
                  acks=False, crypto=None, reset_pin=False)
-        spi_channel: SPI spi_channel [0 for CE0, 1 for CE1]
+        spi_channel: SPI channel [0 for CE0, 1 for CE1]
         interrupt_pin: Raspberry Pi interrupt_pin pin (BCM)
         my_address: set address for this device [0-254]
+        spi_port: spi port connected to module, 0 or 1
         reset_pin: the Raspberry Pi port used to reset the RFM9x if connected
         freq: frequency in MHz
         tx_power: transmit power in dBm
@@ -113,7 +114,7 @@ class LoRa(object):
 
         
         self.spi = spidev.SpiDev()
-        self.spi.open(0, self._spi_channel)
+        self.spi.open(spi_port, self._spi_channel)
         self.spi.max_speed_hz = 5000000
 
         self._spi_write(REG_01_OP_MODE, MODE_SLEEP | LONG_RANGE_MODE)

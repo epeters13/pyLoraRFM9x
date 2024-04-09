@@ -86,14 +86,16 @@ lora = LoRa(0, 17, 2, crypto=crypto)
 ### Configuration
 ##### Initialization
 ```python
-LoRa(spi_channel, interrupt_pin, my_address, reset_pin=reset_pin, freq=915, tx_power=14,
+LoRa(spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=reset_pin, freq=915, tx_power=14,
       modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None)
 ```
 **`spi_channel`** SPI channel to use (either 0 or 1, if your LoRa radio if connected to CE0 or CE1, respectively)
 
 **`interrupt_pin`** GPIO pin (BCM-style numbering) to use for the interrupt
 
-**`my_address`** The address number (0-254) your device will use when sending and receiving packets.
+**`my_address`** The address number (0-254) your device will use when sending and receiving packets
+
+**`spi_port` ** SPI port connected to module, 0 or 1
 
 **`reset_pin`** The pin that resets the module. Defaults to None
 
@@ -165,6 +167,9 @@ Use `gpioinfo` command in the shell
 [Adafruit CircuitPython module for the RFM95/6/7/8](https://github.com/adafruit/Adafruit_CircuitPython_RFM9x) - LoRa library for CircuitPython
 
 # Changelog
+
+## 1.0.1
+Added option to select SPI module
 
 ## 1.0.0
 Removed RPi.GPIO dependency and ported to lgpio due to the removal of the sysfs GPIO interface in newer kernels
