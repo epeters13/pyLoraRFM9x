@@ -168,6 +168,9 @@ Use `gpioinfo` command in the shell
 
 # Changelog
 
+## 1.0.2
+Typo fixed in error handling call
+
 ## 1.0.1
 Added option to select SPI module
 
