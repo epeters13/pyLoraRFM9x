@@ -379,7 +379,7 @@ class LoRa(object):
         self._spi_write(REG_12_IRQ_FLAGS, 0xff)
 
     def close(self):
-        GPIO.cleanup()
+        lgpio.gpiochip_close(0)
         self.spi.close()
 
     def __del__(self):
