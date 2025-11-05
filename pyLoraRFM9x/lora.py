@@ -46,23 +46,24 @@ class ModemConfig(Enum):
 class LoRa(object):
     def __init__(self, spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=None, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
-                 acks=False, crypto=None, default_mode = 0):
+                 acks=False, crypto=None, default_mode = 0, radiohead=True):
         """
-        Lora((spi_channel, interrupt_pin, my_address, freq=915, tx_power=14,
+        Lora((spi_channel, interrupt_pin, my_address, spi_port, reset_pin=False, freq=915, tx_power=14,
                  modem_config=ModemConfig.Bw125Cr45Sf128, receive_all=False,
-                 acks=False, crypto=None, reset_pin=False)
+                 acks=False, crypto=None, default_mode = 0, radiohead=True)
         spi_channel: SPI channel [0 for CE0, 1 for CE1]
         interrupt_pin: Raspberry Pi interrupt_pin pin (BCM)
         my_address: set address for this device [0-254]
-        spi_port: spi port connected to module, 0 or 1
+        spi_port: spi port connected to module, 0 or 1 You may need to change this depending on your Raspberry Pi model
         reset_pin: the Raspberry Pi port used to reset the RFM9x if connected
         freq: frequency in MHz
         tx_power: transmit power in dBm
         modem_config: Check ModemConfig. Default is compatible with the Radiohead library
         receive_all: if True, don't filter packets on address
-        acks: if True, request acknowledgments
+        acks: if True, request acknowledgments does not work if radiohead is disabled
         crypto: if desired, an instance of pycrypto AES
         default_mode: Default mode the modem enters after transmit [0: RXCONTINUOUS, 1: IDLE, 2: SLEEP] default: RXCONTINUOUS
+        radiohead: if True (by default), use Radiohead header format (4 byte header), else send/receive raw payloads only
         """
         
         self._spi_channel = spi_channel
@@ -75,9 +76,10 @@ class LoRa(object):
         self._tx_power = tx_power
         self._modem_config = modem_config
         self._receive_all = receive_all
-        self._acks = acks
+        self._acks = acks and radiohead
+        self._radiohead = radiohead
 
-        self._my_address = my_address
+        self._my_address = my_address if radiohead else 0
         self._last_header_id = 0
 
         self._last_payload = None
@@ -87,6 +89,7 @@ class LoRa(object):
         self.send_retries = 2
         self.wait_packet_sent_timeout = 0.2
         self.retry_timeout = 0.2
+        
 
         # default mode after CAD_DONE and TX_DONE events
         if default_mode == 0:
@@ -227,7 +230,7 @@ class LoRa(object):
                 self._mode = MODE_STDBY
 
 
-    def send(self, data, header_to, header_id=0, header_flags=0):
+    def send(self, data, header_to =None, header_id=0, header_flags=0):
         """
         The TX FIFO can only be filled in stand-by or idle mode
         """
@@ -236,8 +239,12 @@ class LoRa(object):
         if CAD_status == 1:
             return False
         self.set_mode_idle()  # Set mode to idle, so we can start filling the transmit FIFO
-
-        header = [header_to, self._my_address, header_id, header_flags]
+        if header_to is None:
+            header_to = self._my_address
+        if not self._radiohead: # no header if radiohead mode is disabled
+            header = []
+        else:
+            header = [header_to, self._my_address, header_id, header_flags]
         if type(data) == int:
             data = [data]
         elif type(data) == bytes:
@@ -256,9 +263,12 @@ class LoRa(object):
 
         self.set_mode_tx()
         return self.wait_packet_sent() # wait for the send interrupt to trigger
+    
         
 
     def send_to_wait(self, data, header_to, header_flags=0, retries=3):
+        if not self._radiohead:
+            raise RuntimeError("send_to_wait cannot be used when radiohead mode is disabled.")
         self._last_header_id = (self._last_header_id + 1) & 0xFF
         # print(f'sending {data} to {header_to}')
         for _ in range(retries + 1):
@@ -321,62 +331,93 @@ class LoRa(object):
         return encrypted_msg
 
     def _handle_interrupt(self, chip, gpio_pin, gpio_level, timestamp):
+        """
+        Main interrupt handler. Reads interrupt flags and dispatches to the
+        appropriate handler based on the current modem mode.
+        """
         irq_flags = self._spi_read(REG_12_IRQ_FLAGS)
 
-        if self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_DONE):
-            with self._hw_lock:
-                packet_len = self._spi_read(REG_13_RX_NB_BYTES)
-                self._spi_write(REG_0D_FIFO_ADDR_PTR, self._spi_read(REG_10_FIFO_RX_CURRENT_ADDR))
-
-                packet = self._spi_read(REG_00_FIFO, packet_len)
-                self._spi_write(REG_12_IRQ_FLAGS, 0xff)  # Clear all IRQ flags
-
-                snr = self._spi_read(REG_19_PKT_SNR_VALUE)
-                # RSSI calculation for HopeRF RFM9x modules
-                # This is different for Semtech radios, it seems
-                rssi = -137 + self._spi_read(REG_1A_PKT_RSSI_VALUE)
-                
-            if snr > 127:
-                snr = (256 - snr) * -1
-            snr /= 4
-
-               
-            if packet_len >= 4:
-                header_to = packet[0]
-                header_from = packet[1]
-                header_id = packet[2]
-                header_flags = packet[3]
-                message = bytes(packet[4:]) if packet_len > 4 else b''
-
-                if self._my_address != header_to and BROADCAST_ADDRESS != header_to and self._receive_all is False:
-                    return
-
-                if self.crypto and len(message) % 16 == 0:
-                    message = self._decrypt(message)
-
-                if  (header_to == self._my_address and header_flags & FLAGS_REQ_ACK and not header_flags & FLAGS_ACK) and not self._acks:
-                    self.send_ack(header_from, header_id)
-
-                self.set_mode_rx()
-
-                self._last_payload = namedtuple(
-                    "Payload",
-                    ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
-                )(message, header_to, header_from, header_id, header_flags, rssi, snr)
-
-                if not header_flags & FLAGS_ACK:
-                    self.on_recv(self._last_payload)
-
+        if self._mode == MODE_RXCONTINUOUS and (irq_flags & (RX_DONE | RX_TIMEOUT)):
+            self._handle_rx_done(irq_flags)
         elif self._mode == MODE_TX and (irq_flags & TX_DONE):
-            self._set_default_mode() # configured in init
-
+            self._handle_tx_done()
         elif self._mode == MODE_CAD and (irq_flags & CAD_DONE):
-            self._cad = irq_flags & CAD_DETECTED # 0 false, 1 detected
-            self._set_default_mode() 
-        elif self._mode == MODE_RXCONTINUOUS and (irq_flags & RX_TIMEOUT):
-            pass
+            self._handle_cad_done(irq_flags)
 
+        # Clear all interrupt flags
         self._spi_write(REG_12_IRQ_FLAGS, 0xff)
+
+    def _handle_rx_done(self, irq_flags):
+        """Handles RX_DONE interrupt. Reads, processes, and dispatches the packet."""
+        if not (irq_flags & RX_DONE):
+            return  # Only process completed packets
+
+        with self._hw_lock:
+            # RSSI and SNR must be read from registers before the packet FIFO
+            snr = self._spi_read(REG_19_PKT_SNR_VALUE)
+            rssi = self._spi_read(REG_1A_PKT_RSSI_VALUE)
+
+            packet_len = self._spi_read(REG_13_RX_NB_BYTES)
+            self._spi_write(REG_0D_FIFO_ADDR_PTR, self._spi_read(REG_10_FIFO_RX_CURRENT_ADDR))
+            packet = self._spi_read(REG_00_FIFO, packet_len)
+
+        # Adjust SNR value
+        snr = (snr - 256) / 4 if snr > 127 else snr / 4
+        # Adjust RSSI for HopeRF modules
+        rssi = rssi - 137
+
+        if not self._radiohead:
+            self._process_raw_packet(packet, rssi, snr)
+        elif packet_len >= 4:
+            self._process_radiohead_packet(packet, rssi, snr)
+
+        self.set_mode_rx()
+
+    def _process_raw_packet(self, packet, rssi, snr):
+        """Processes packets without RadioHead headers."""
+        message = bytes(packet)
+        if self.crypto and message:
+            message = self._decrypt(message)
+
+        self._last_payload = namedtuple('Payload', ['message', 'rssi', 'snr'])(message, rssi, snr)
+        self.on_recv(self._last_payload)
+
+    def _process_radiohead_packet(self, packet, rssi, snr):
+        """Processes packets with RadioHead headers."""
+        header_to, header_from, header_id, header_flags = packet[:4]
+        message = bytes(packet[4:])
+
+        # Filter packets not addressed to this node
+        if self._receive_all is False and header_to not in (self._my_address, BROADCAST_ADDRESS):
+            return
+
+        if self.crypto and message:
+            message = self._decrypt(message)
+
+        # Automatically send an ACK if requested and not in ACK-requiring mode
+        if (self._acks is False and
+                header_to == self._my_address and
+                header_flags & FLAGS_REQ_ACK and not
+                header_flags & FLAGS_ACK):
+            self.send_ack(header_from, header_id)
+
+        self._last_payload = namedtuple(
+            'Payload',
+            ['message', 'header_to', 'header_from', 'header_id', 'header_flags', 'rssi', 'snr']
+        )(message, header_to, header_from, header_id, header_flags, rssi, snr)
+
+        # Do not call on_recv for ACK packets
+        if not (header_flags & FLAGS_ACK):
+            self.on_recv(self._last_payload)
+
+    def _handle_tx_done(self):
+        """Handles TX_DONE interrupt by setting the modem to its default mode."""
+        self._set_default_mode()
+
+    def _handle_cad_done(self, irq_flags):
+        """Handles CAD_DONE interrupt by setting CAD status and returning to default mode."""
+        self._cad = bool(irq_flags & CAD_DETECTED)
+        self._set_default_mode()
 
     def close(self):
         lgpio.gpiochip_close(0)

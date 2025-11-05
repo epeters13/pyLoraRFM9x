@@ -1,8 +1,9 @@
 [project]
 name = "pyLoraRFM9x"
-version = "1.0.2"
+version = "1.1.0"
 authors = [
   { name="Edwin Peters", email="edwin.g.w.peters@gmail.com" },
+  { name="Phillip Weinstock", email="pweinstock@camfor.com.au"}
 ]
 description = "Interrupt driven LoRa RFM9x library for Raspberry Pi inspired by RadioHead"
 readme = "README.md"
