@@ -1,10 +1,12 @@
 # pyLoraRFM9x
 
-This project is a fork of [raspi-lora](https://gitlab.com/the-plant/raspi-lora) project.
+This project originally was a fork of the [raspi-lora](https://gitlab.com/the-plant/raspi-lora) project.
 
-pyLoraRFM9x is a interrupt based Python library for using HopeRF RFM95/96/97/98 LoRa radios with a Raspberry Pi. The design was inspired by the [RadioHead](http://www.airspayce.com/mikem/arduino/RadioHead) project that is popular on Arduino-based platforms. Several handy features offered by RadioHead are present here, including encryption, addressing, optional acknowledgments and retransmission. The motivation of this project is to allow Raspberry Pis to communicate with devices using the [RadioHead RF95](http://www.airspayce.com/mikem/arduino/RadioHead/classRH__RF95.html) driver.
+pyLoraRFM9x is an interrupt-based Python library for using HopeRF RFM95/96/97/98 LoRa radios with a Raspberry Pi. The design was initially inspired by the [RadioHead](http://www.airspayce.com/mikem/arduino/RadioHead) project that is popular on Arduino-based platforms.
 
-This fork fixes bugs in the interrupt handling, and supports both acknowledged and unacknowledged transfers with the use of flags in the packet header.
+The library supports both high-level and low-level communication. For compatibility with RadioHead, it offers features like encryption, addressing, optional acknowledgments, and retransmissions. For more direct control, it also provides the ability to send and receive raw packets. The primary motivation of this project is to enable Raspberry Pis to communicate with devices using the [RadioHead RF95](http://www.airspayce.com/mikem/arduino/RadioHead/classRH__RF95.html) driver.
+
+This fork fixes bugs in the interrupt handling, and supports both acknowledged and unacknowledged transfers with the use of flags in the packet header provided by RadioHead.
 
 # Usage
 ### Installation
@@ -42,7 +44,7 @@ ls -l /dev/spidev*
 ```
 in the terminal.
 
-Next, here is a quick example that sets things up and sends a message:
+Next, here is a quick example that sets things up and sends a RadioHead compatible message:
 ```python
 from pyLoraRFM9x import LoRa, ModemConfig
 
@@ -54,17 +56,37 @@ def on_recv(payload):
 
 # Lora object will use spi port 0 and use chip select 1. GPIO pin 5 will be used for interrupts and set reset pin to 25
 # The address of this device will be set to 2
-lora = LoRa(0, 1, 5, 2, reset_pin = 25, modem_config=ModemConfig.Bw125Cr45Sf128, tx_power=14, acks=True)
+lora = LoRa(spi_channel=1, interrupt_pin=5, my_address=2, spi_port=0, reset_pin = 25, modem_config=ModemConfig.Bw125Cr45Sf128, tx_power=14, acks=True)
 lora.on_recv = on_recv
 
 # Send a message to a recipient device with address 10
-# Retry sending the message twice if we don't get an  acknowledgment from the recipient
+# This will send a message and wait for an acknowledgment.
+# The message will be sent a total of 3 times (1 initial, 2 retries)
 message = "Hello there!"
 status = lora.send_to_wait(message, 10, retries=2)
 if status is True:
     print("Message sent!")
 else:
     print("No acknowledgment from recipient")
+```
+Next, Here is an example of directly sending and recieving raw LoRa packets
+```python
+from pyLoRaRFM9x import LoRa, ModemConfig
+
+# This is our callback function that runs when a message is received
+def on_recv(payload):
+    print("Received:", payload.message)
+    print("RSSI: {}; SNR: {}".format(payload.rssi, payload.snr))
+message = "Hello there!"
+# Note: my_address is not used in non-radiohead mode, but a value must be provided.
+#       acks are also disabled automatically in this mode.
+lora = LoRa(spi_channel=1, interrupt_pin=5, my_address=2, spi_port=0, reset_pin = 25, modem_config=ModemConfig.Bw125Cr45Sf128, tx_power=14, radiohead=False)
+lora.on_recv = on_recv
+status = lora.send(message)
+if status is True:
+    print("Message sent!")
+else:
+    print("Radio failed to send")
 ```
 
 ### Encryption
@@ -87,7 +109,7 @@ lora = LoRa(0, 17, 2, crypto=crypto)
 ##### Initialization
 ```python
 LoRa(spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=reset_pin, freq=915, tx_power=14,
-      modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None)
+      modem_config=ModemConfig.Bw125Cr45Sf128, acks=False, crypto=None, default_mode = 0, radiohead=True)
 ```
 **`spi_channel`** SPI channel to use (either 0 or 1, if your LoRa radio if connected to CE0 or CE1, respectively)
 
@@ -95,7 +117,7 @@ LoRa(spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=reset_pin, 
 
 **`my_address`** The address number (0-254) your device will use when sending and receiving packets
 
-**`spi_port` ** SPI port connected to module, 0 or 1
+**`spi_port`** SPI port connected to module, 0 or 1 You may need to change this depending on your Raspberry Pi model
 
 **`reset_pin`** The pin that resets the module. Defaults to None
 
@@ -105,30 +127,29 @@ LoRa(spi_channel, interrupt_pin, my_address, spi_port = 0, reset_pin=reset_pin, 
 
 **`model_config`** Modem configuration. See [RadioHead docs](http://www.airspayce.com/mikem/arduino/RadioHead/classRH__RF95.html#ab9605810c11c025758ea91b2813666e3). Default to Bw125Cr45Sf128.
 
-**`acks`** If `True`, send an acknowledgment packet when a message is received and wait for an acknowledgment when transmitting a message. This is equivalent to using RadioHead's RHReliableDatagram
+**`acks`** If `True` and in RadioHead mode, send an acknowledgment packet when a message is received and wait for an acknowledgment when transmitting a message. This is equivalent to using RadioHead's RHReliableDatagram. This feature is disabled if `radiohead=False`.
 
 **`crypto`** An instance of [PyCrypto Cipher.AES](https://www.dlitz.net/software/pycrypto/api/current/Crypto.Cipher.AES-module.html) (see above example)
 
+**`default_mode`** Default mode the modem enters after transmit [0: RXCONTINUOUS, 1: IDLE, 2: SLEEP] default: RXCONTINUOUS
+**`radiohead`** If `True` (default), use RadioHead header format (4 byte header). If `False`, send/receive raw payloads only. Features like `acks` and `send_to_wait` require RadioHead mode.
 
 ##### Other options:
 A `LoRa` instance also has the following attributes that can be changed:
 - **cad_timeout** Timeout for channel activity detection. Default is 1 second
-- **retry_timeout** Time to wait for an acknowledgment before attempting a retry. Defaults to 0.5 seconds
-- **wait_packet_sent_timeout** Timeout for waiting for a packet to transmit. Default is 0.5 seconds
+- **retry_timeout** Time to wait for an acknowledgment before attempting a retry. Defaults to 0.2 seconds
+- **wait_packet_sent_timeout** Timeout for waiting for a packet to transmit. Default is 0.2 seconds
 
 ##### Methods
-###### `send_to_wait(data, header_to, header_flags=0)`
-Send a message and block until an acknowledgment is received or a timeout occurs. Returns `True` if successful
+###### `send_to_wait(data, header_to, header_flags=0, retries=3)`
+Send a message and block until an acknowledgment is received or a timeout occurs. Returns `True` if successful. This method requires `radiohead=True`.
 - ``data`` Your message. Can be a string or byte string
 - ``header_to`` Address of recipient (0-255). If address is 255, the message will be broadcast to all devices and **`send_to_wait`** will return `True` without waiting for acknowledgments
 - ``header_flags`` Bitmask that can contain flags specific to your application
+- ``retries`` The number of times to retry sending if an ACK is not received. `retries=2` means 1 initial attempt and 2 retries, for a total of 3 attempts.
 
 ###### `send(data, header_to, header_id=0, header_flags=0)`
-Similar to `send_to_wait` but does not block or wait for acknowledgments and will always return `True`
-- ``data`` Your message. Can be a string or byte string
-- ``header_id`` Unique ID of message (0-255)
-- ``header_to`` Address of recipient (0-255). If address is 255, the message will be broadcast to all devices
-- ``header_flags`` Bitmask that can contain flags specific to your application
+Similar to `send_to_wait` but does not block or wait for acknowledgments and will always return `True` if the packet is sent. In non-RadioHead mode, only the `data` parameter is used.
 
 ###### `set_mode_rx()`
 Set radio to RX continuous mode
